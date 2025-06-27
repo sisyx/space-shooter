@@ -2,5 +2,5 @@
 
 this is just a simple game but the fun is that you control the game with your hands in the air and not on the keyboard
 
-## Upcomming:
+## Upcoming:
 1. hand detection with mediapipe
