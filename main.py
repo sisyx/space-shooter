@@ -4,12 +4,32 @@ import random
 import locale
 import time
 
+import os
+import logging
+
+# Add these BEFORE importing cv2 and mediapipe
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'  # Suppress TensorFlow warnings
+logging.getLogger('mediapipe').setLevel(logging.ERROR)
+
+import cv2
+cv2.setLogLevel(0)  # or cv2.LOG_LEVEL_SILENT if available
+
+import mediapipe
+import numpy as np
+
+# Initialize Mediapipe
+mp_hands = mediapipe.solutions.hands
+mp_drawing = mediapipe.solutions.drawing_utils
+mp_drawing_styles = mediapipe.solutions.drawing_styles
+
+
 @dataclass
 class Config:
     # Use ASCII fallbacks for better terminal compatibility
     player_char: str = "^"
     enemy_char: str = "V"
     player_step: int = 4
+    tmp_player_step: int = 4
     simple_fire_char: str = "|"
     max_enemy_per_line = 8
     enemy_move_delay = 15
@@ -21,8 +41,22 @@ class SpaceShooter:
         self.config = config
         self.stdscr = stdscr
         self.height, self.width = self.stdscr.getmaxyx()
-        self.player_x = self.width // 2
-        self.player_y = self.height - 1
+        self.game_width = self.width // 2
+        self.player_x = self.game_width // 2
+        self.player_y = self.height - 10
+        self.using_visual_commands = True
+        self.cap = None
+        self.recent_player_dirs = [0,0,0,0,0,0,0,0]
+        
+        # visual controller
+        self.first_hand_pos = {
+            "x": 0,
+            "y": 0
+        }
+        self.second_hand_pos = {
+            "x": 0,
+            "y": 0
+        }
         
         # Initialize curses properly
         self.setup_curses()
@@ -34,11 +68,39 @@ class SpaceShooter:
         # score & player
         self.score = 0
         self.health = 5
-        
+       
         # Timing control
         self.frame_time = 1.0 / self.config.target_fps
         self.last_frame_time = time.time()
 
+        # Initialize mediapipe hands
+        self.hands = mp_hands.Hands(
+            static_image_mode=False,
+            max_num_hands=2,
+            min_detection_confidence=0.5,
+            min_tracking_confidence=0.5
+        )
+
+    def render_control(self):
+        """Render Hands"""
+        base_x = self.game_width
+        base_y = 5
+
+        global_first_hand_position = {
+            "x": base_x + self.first_hand_pos["x"],
+            "y": base_y + self.first_hand_pos["y"],
+        }
+        global_second_hand_position = {
+            "x": base_x + self.second_hand_pos["x"],
+            "y": base_y + self.second_hand_pos["y"],
+        }
+        self.safe_addstr(3, 3, f"{global_first_hand_position['y']}, {global_first_hand_position['x']}")
+        self.safe_addstr(6, 3, f"{global_second_hand_position['y']}, {global_second_hand_position['x']}")
+
+        self.safe_addch(global_first_hand_position["y"], global_first_hand_position["x"], "🤚")
+        self.safe_addch(global_second_hand_position["y"], global_second_hand_position["x"], "✋")
+        
+        
     def setup_curses(self):
         """Properly initialize curses with better compatibility"""
         # Set locale for better character support
@@ -97,30 +159,136 @@ class SpaceShooter:
         while self.health > 0:
             frame_start = time.time()
             
-            # Handle input
-            self.handle_input()
+            if self.using_visual_commands and self.cap == None:
+                self._run_camera()
             
             # Update game state
             self.update_game_state()
             
             # Render everything
-            self.render()
+            self.p()
             
             # Control frame rate
             self.control_frame_rate(frame_start)
+
+            # Handle input
+            self.handle_input()
             
             self.loop_count += 1
+        
+        if self.using_visual_commands:
+            self._stop_camera()
+    
+    def _run_camera(self):
+
+        self.cap = cv2.VideoCapture(0)
+        _, frame = self.cap.read()
+    
+        self.initial_blank = np.zeros(frame.shape, dtype=np.uint8)
+
+        self.using_visual_commands = True
+
+    def _stop_camera(self):
+        self.cap.release()
+        cv2.destroyAllWindows()
+        self.hands.close()
+        print("Camera released and windows closed.")
+
+    def _get_visual_commands(self):
+        if not self.cap.isOpened():
+            print("ERROR: Could not open Camera")
+            self.using_visual_commands = False
+            return
+        else:
+            self.using_visual_commands = True
+
+        ret, frame = self.cap.read()
+        blank = self.initial_blank.copy()
+
+        if not ret:
+            print("ERROR: Failed to capture frame")
+            return 
+
+        # Flip the frame horizontally for mirror effect
+        frame = cv2.flip(frame, 1)
+
+        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
+        # process hands
+        hand_results = self.hands.process(rgb_frame)
+
+        if hand_results.multi_hand_landmarks and len(hand_results.multi_hand_landmarks) ==2:
+            h, w, c = blank.shape
+
+            first_hand = hand_results.multi_hand_landmarks[0]
+            second_hand = hand_results.multi_hand_landmarks[1]
+            first_hand_position = first_hand.landmark[0]
+            second_hand_position = second_hand.landmark[0]
+            self.first_hand_pos["x"] = int(first_hand_position.x * (self.width // 2))
+            self.first_hand_pos["y"] = int(first_hand_position.y * self.height)
+            self.second_hand_pos["x"] = int(second_hand_position.x * (self.width // 2))
+            self.second_hand_pos["y"] = int(second_hand_position.y * self.height)
+
+            first_x_y = (first_hand_position.x, first_hand_position.y)
+            second_x_y = (second_hand_position.x, second_hand_position.y)
+
+            vertical_height = abs(first_hand_position.y - second_hand_position.y)
+            horizontal_length = abs(first_hand_position.x - second_hand_position.x)
+            hypotenuse = np.sqrt(vertical_height**2 + horizontal_length**2)
+
+            if horizontal_length > 0:
+                _slope = (first_hand_position.y - second_hand_position.y) / (first_hand_position.x - second_hand_position.x)
+                _sign = 1 if _slope > 0 else -1
+                _sin = _sign * (vertical_height / hypotenuse)
+                _dir = _sign
+                
+                # compute player x acceleration
+                self.recent_player_dirs = [_sign] + self.recent_player_dirs
+                if len(self.recent_player_dirs) > 8:
+                    self.recent_player_dirs.pop()
+                times_in_this_direction = 0
+                for i in self.recent_player_dirs:
+                    if i == _dir:
+                        times_in_this_direction += 1
+                    else: break
+                _step_increase_rate = 1.1 ** (times_in_this_direction - 1)
+                self.config.tmp_player_step = self.config.player_step * _step_increase_rate
+
+                _tmp_step = int(self.config.tmp_player_step * _sin)
+                new_player_x = self.player_x + _tmp_step
+
+                if _sign == 1:
+                    if new_player_x < self.game_width - self.config.tmp_player_step:
+                        self.player_x += _tmp_step
+                    else:
+                        self.player_x = self.game_width - self.config.player_step
+                else:
+                    if self.config.tmp_player_step < new_player_x:
+                        self.player_x += _tmp_step
+                    else:
+                        self.player_x = 0 + self.config.player_step
+
+                self.fire_simple()
+
+        self.stdscr.clear()
+        self.stdscr.refresh()
 
     def handle_input(self):
         """Handle all input in one place"""
         key = self.stdscr.getch()
         if key == ord("q"):
             self.health = 0  # Exit game
+
+        if self.using_visual_commands:
+            if self.loop_count % 3 == 0:
+                self._get_visual_commands()
+            return
+
         elif key == curses.KEY_LEFT:
             if self.player_x > 1:
                 self.player_x -= self.config.player_step
         elif key == curses.KEY_RIGHT:
-            if self.player_x < self.width - 2:
+            if self.player_x < self.game_width - 2:
                 self.player_x += self.config.player_step
         elif key == curses.KEY_UP:
             if self.player_y > 1:
@@ -159,7 +327,7 @@ class SpaceShooter:
                     self.enemies.pop(idx)
                     self.health -= 1
 
-    def render(self):
+    def p(self):
         """Render everything using double buffering technique"""
         # Clear screen (but don't refresh yet)
         self.stdscr.erase()
@@ -180,6 +348,9 @@ class SpaceShooter:
         
         # Draw UI
         self.render_ui()
+
+        # Draw controlls 
+        self.render_control()
         
         # Draw border (optional, for better visual feedback)
         self.draw_border()
@@ -190,26 +361,27 @@ class SpaceShooter:
 
     def render_ui(self):
         """Render game UI elements"""
-        self.safe_addstr(0, 1, f"Health: {self.health}")
-        self.safe_addstr(0, 15, f"Score: {self.score}")
-        self.safe_addstr(0, 30, f"Enemies: {len(self.enemies)}")
+        # self.safe_addstr(0, 1, f"Health: {self.health}")
+        # self.safe_addstr(0, 15, f"Score: {self.score}")
+        # self.safe_addstr(0, 30, f"Enemies: {len(self.enemies)}")
+        self.safe_addstr(0, 45, f"player: ({self.player_x},{self.player_y})")
         
         # Instructions
         instructions = "Arrow keys: Move | Space: Fire | Q: Quit"
-        if len(instructions) < self.width - 2:
+        if len(instructions) < self.game_width - 2:
             self.safe_addstr(self.height - 1, 1, instructions)
 
     def draw_border(self):
         """Draw a simple border around the play area"""
         try:
             # Top and bottom borders
-            for x in range(self.width):
+            for x in range(self.game_width):
                 self.safe_addch(1, x, "-")
             
             # Side borders (avoid bottom line to prevent cursor wrap issues)
             for y in range(2, self.height - 1):
                 self.safe_addch(y, 0, "|")
-                self.safe_addch(y, self.width - 1, "|")
+                self.safe_addch(y, self.game_width - 1, "|")
                 
         except curses.error:
             pass  # Skip border if it causes issues
@@ -237,7 +409,7 @@ class SpaceShooter:
         for i in range(num_enemies):
             if self._random_true_false(chance=0.6):
                 new_enemy = {
-                    "x": random.randint(2, self.width - 3),
+                    "x": random.randint(2, self.game_width - 3),
                     "y": 2
                 }
                 self.enemies.append(new_enemy)
