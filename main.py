@@ -1,3 +1,4 @@
+from audio_control import GameAudio
 import curses
 from dataclasses import dataclass
 import random
@@ -81,25 +82,28 @@ class SpaceShooter:
             min_tracking_confidence=0.5
         )
 
-    def render_control(self):
-        """Render Hands"""
-        base_x = self.game_width
-        base_y = 5
+        # initialize game audio
+        self.audio_controller = GameAudio()
 
-        global_first_hand_position = {
-            "x": base_x + self.first_hand_pos["x"],
-            "y": base_y + self.first_hand_pos["y"],
-        }
-        global_second_hand_position = {
-            "x": base_x + self.second_hand_pos["x"],
-            "y": base_y + self.second_hand_pos["y"],
-        }
-        self.safe_addstr(3, 3, f"{global_first_hand_position['y']}, {global_first_hand_position['x']}")
-        self.safe_addstr(6, 3, f"{global_second_hand_position['y']}, {global_second_hand_position['x']}")
+    # def render_control(self):
+    #     """Render Hands"""
+    #     base_x = self.game_width
+    #     base_y = 5
 
-        self.safe_addch(global_first_hand_position["y"], global_first_hand_position["x"], "🤚")
-        self.safe_addch(global_second_hand_position["y"], global_second_hand_position["x"], "✋")
-        
+    #     global_first_hand_position = {
+    #         "x": base_x + self.first_hand_pos["x"],
+    #         "y": base_y + self.first_hand_pos["y"],
+    #     }
+    #     global_second_hand_position = {
+    #         "x": base_x + self.second_hand_pos["x"],
+    #         "y": base_y + self.second_hand_pos["y"],
+    #     }
+    #     self.safe_addstr(3, 3, f"{global_first_hand_position['y']}, {global_first_hand_position['x']}")
+    #     self.safe_addstr(6, 3, f"{global_second_hand_position['y']}, {global_second_hand_position['x']}")
+
+    #     self.safe_addch(global_first_hand_position["y"], global_first_hand_position["x"], "🤚")
+    #     self.safe_addch(global_second_hand_position["y"], global_second_hand_position["x"], "✋")
+
         
     def setup_curses(self):
         """Properly initialize curses with better compatibility"""
@@ -185,7 +189,7 @@ class SpaceShooter:
         _, frame = self.cap.read()
     
         self.initial_blank = np.zeros(frame.shape, dtype=np.uint8)
-
+        
         self.using_visual_commands = True
 
     def _stop_camera(self):
@@ -217,26 +221,49 @@ class SpaceShooter:
         # process hands
         hand_results = self.hands.process(rgb_frame)
 
-        if hand_results.multi_hand_landmarks and len(hand_results.multi_hand_landmarks) ==2:
+        if hand_results.multi_hand_landmarks and len(hand_results.multi_hand_landmarks) == 2:
             h, w, c = blank.shape
 
             first_hand = hand_results.multi_hand_landmarks[0]
             second_hand = hand_results.multi_hand_landmarks[1]
             first_hand_position = first_hand.landmark[0]
             second_hand_position = second_hand.landmark[0]
+            
+            # Convert to pixel coordinates for display
+            first_hand_pixel_x = int(first_hand_position.x * w)
+            first_hand_pixel_y = int(first_hand_position.y * h)
+            second_hand_pixel_x = int(second_hand_position.x * w)
+            second_hand_pixel_y = int(second_hand_position.y * h)
+            
+            # Your existing game coordinate conversion
             self.first_hand_pos["x"] = int(first_hand_position.x * (self.width // 2))
             self.first_hand_pos["y"] = int(first_hand_position.y * self.height)
             self.second_hand_pos["x"] = int(second_hand_position.x * (self.width // 2))
             self.second_hand_pos["y"] = int(second_hand_position.y * self.height)
 
-            first_x_y = (first_hand_position.x, first_hand_position.y)
-            second_x_y = (second_hand_position.x, second_hand_position.y)
-
+            # Calculate distances in normalized coordinates
             vertical_height = abs(first_hand_position.y - second_hand_position.y)
             horizontal_length = abs(first_hand_position.x - second_hand_position.x)
             hypotenuse = np.sqrt(vertical_height**2 + horizontal_length**2)
 
             if horizontal_length > 0:
+                # Draw Circle using PIXEL coordinates
+                center_x = int((first_hand_pixel_x + second_hand_pixel_x) // 2)
+                center_y = int((first_hand_pixel_y + second_hand_pixel_y) // 2)
+                center = (center_x, center_y)
+                color = (200, 200, 200)
+                thickness = 16
+                
+                # Convert normalized radius to pixel radius
+                radius = int(hypotenuse * min(w, h) * 0.5)  # Scale appropriately
+                # Or use a fixed radius for testing:
+                # radius = 50
+                
+                cv2.circle(blank, center=center, radius=radius, color=color, thickness=thickness)
+                # cv2.line(blank, center, (int(first_hand_position.x), int(first_hand_position.y)), color, thickness)
+                # cv2.line(blank, pt1=center, pt2=(int(second_hand_position.x), int(second_hand_position.y)), color=color, thickness=thickness)
+
+                # Rest of your existing code...
                 _slope = (first_hand_position.y - second_hand_position.y) / (first_hand_position.x - second_hand_position.x)
                 _sign = 1 if _slope > 0 else -1
                 _sin = _sign * (vertical_height / hypotenuse)
@@ -270,6 +297,16 @@ class SpaceShooter:
 
                 self.fire_simple()
 
+                for hand_landmarks in hand_results.multi_hand_landmarks:
+                    # Draw hand landmarks and connections
+                    mp_drawing.draw_landmarks(
+                        blank,
+                        hand_landmarks,
+                        mp_hands.HAND_CONNECTIONS,
+                    )
+
+                cv2.imshow("x", blank)
+                cv2.waitKey(1)
         self.stdscr.clear()
         self.stdscr.refresh()
 
@@ -350,7 +387,7 @@ class SpaceShooter:
         self.render_ui()
 
         # Draw controlls 
-        self.render_control()
+        # self.render_control()
         
         # Draw border (optional, for better visual feedback)
         self.draw_border()
@@ -397,6 +434,7 @@ class SpaceShooter:
         """Fire a bullet"""
         if self.player_y > 2:  # Only fire if not at top
             self.shoots.append({"x": self.player_x, "y": self.player_y - 1})
+            self.audio_controller._play_shoot_sound()
 
     def generate_enemy(self):
         """Generate new enemies"""
