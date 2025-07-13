@@ -1,9 +1,12 @@
 from audio_control import GameAudio
+from model.fire_controller import FireController
+
 import curses
 from dataclasses import dataclass
 import random
 import locale
 import time
+import pandas as pd
 
 import os
 import logging
@@ -84,27 +87,11 @@ class SpaceShooter:
 
         # initialize game audio
         self.audio_controller = GameAudio()
-
-    # def render_control(self):
-    #     """Render Hands"""
-    #     base_x = self.game_width
-    #     base_y = 5
-
-    #     global_first_hand_position = {
-    #         "x": base_x + self.first_hand_pos["x"],
-    #         "y": base_y + self.first_hand_pos["y"],
-    #     }
-    #     global_second_hand_position = {
-    #         "x": base_x + self.second_hand_pos["x"],
-    #         "y": base_y + self.second_hand_pos["y"],
-    #     }
-    #     self.safe_addstr(3, 3, f"{global_first_hand_position['y']}, {global_first_hand_position['x']}")
-    #     self.safe_addstr(6, 3, f"{global_second_hand_position['y']}, {global_second_hand_position['x']}")
-
-    #     self.safe_addch(global_first_hand_position["y"], global_first_hand_position["x"], "🤚")
-    #     self.safe_addch(global_second_hand_position["y"], global_second_hand_position["x"], "✋")
-
         
+        # initialize fireController
+        self.fire_controller = FireController()
+
+
     def setup_curses(self):
         """Properly initialize curses with better compatibility"""
         # Set locale for better character support
@@ -295,8 +282,6 @@ class SpaceShooter:
                     else:
                         self.player_x = 0 + self.config.player_step
 
-                self.fire_simple()
-
                 for hand_landmarks in hand_results.multi_hand_landmarks:
                     # Draw hand landmarks and connections
                     mp_drawing.draw_landmarks(
@@ -305,6 +290,29 @@ class SpaceShooter:
                         mp_hands.HAND_CONNECTIONS,
                     )
 
+                f_thumb = first_hand.landmark[1:5]
+                l_thumb = second_hand.landmark[1:5]
+                row: pd.DataFrame = pd.DataFrame({
+                    "is_fire": 1
+                }, index=[0])
+
+                for idx, pos in enumerate(f_thumb):
+                    tup = (pos.x, pos.y, pos.z)
+                    row[f"first-hand-pt-{idx + 1}-x"] = tup[0]
+                    row[f"first-hand-pt-{idx + 1}-y"] = tup[1]
+                    row[f"first-hand-pt-{idx + 1}-z"] = tup[2]
+                
+                for idx, pos in enumerate(l_thumb):
+                    tup = (pos.x, pos.y, pos.z)
+                    row[f"second-hand-pt-{idx + 1}-x"] = tup[0]
+                    row[f"second-hand-pt-{idx + 1}-y"] = tup[1]
+                    row[f"second-hand-pt-{idx + 1}-z"] = tup[2]
+                
+                row.drop(columns=["is_fire"], inplace=True)
+                if (self.fire_controller.decide(row)):
+                    self.fire_simple()
+
+                # self.fire_simple()
                 cv2.imshow("x", blank)
                 cv2.waitKey(1)
         self.stdscr.clear()
