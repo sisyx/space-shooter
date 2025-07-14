@@ -1,6 +1,7 @@
 from audio_control import GameAudio
 from model.fire_controller import FireController
 
+from pathlib import Path
 import curses
 from dataclasses import dataclass
 import random
@@ -39,13 +40,15 @@ class Config:
     enemy_move_delay = 15
     bullet_hitbox = 2  # Fixed typo: bullte -> bullet
     target_fps = 30
+    # steering_wheel_image_path = Path(__file__).parent / "photos/steering_wheel.png"
+    steering_wheel_image = cv2.imread("photos/steering-wheel.png")
 
 class SpaceShooter:
     def __init__(self, stdscr, config=Config()):
         self.config = config
         self.stdscr = stdscr
         self.height, self.width = self.stdscr.getmaxyx()
-        self.game_width = self.width // 2
+        self.game_width = self.width
         self.player_x = self.game_width // 2
         self.player_y = self.height - 10
         self.using_visual_commands = True
@@ -91,6 +94,13 @@ class SpaceShooter:
         # initialize fireController
         self.fire_controller = FireController()
 
+        # create firing steering wheel
+        tmp_image = cv2.imread("photos/steering-wheel.png")
+        mask = np.any(tmp_image != 0, axis=2)
+        red_image = np.zeros_like(tmp_image)
+        red_image[:, :, 2] = 255  # Set blue channel to 0, green to 0, and red to 255
+        self.firing_wheel_image = np.where(mask[:, :, np.newaxis], red_image, tmp_image).astype(np.uint8)
+        
 
     def setup_curses(self):
         """Properly initialize curses with better compatibility"""
@@ -234,22 +244,6 @@ class SpaceShooter:
             hypotenuse = np.sqrt(vertical_height**2 + horizontal_length**2)
 
             if horizontal_length > 0:
-                # Draw Circle using PIXEL coordinates
-                center_x = int((first_hand_pixel_x + second_hand_pixel_x) // 2)
-                center_y = int((first_hand_pixel_y + second_hand_pixel_y) // 2)
-                center = (center_x, center_y)
-                color = (200, 200, 200)
-                thickness = 16
-                
-                # Convert normalized radius to pixel radius
-                radius = int(hypotenuse * min(w, h) * 0.5)  # Scale appropriately
-                # Or use a fixed radius for testing:
-                # radius = 50
-                
-                cv2.circle(blank, center=center, radius=radius, color=color, thickness=thickness)
-                # cv2.line(blank, center, (int(first_hand_position.x), int(first_hand_position.y)), color, thickness)
-                # cv2.line(blank, pt1=center, pt2=(int(second_hand_position.x), int(second_hand_position.y)), color=color, thickness=thickness)
-
                 # Rest of your existing code...
                 _slope = (first_hand_position.y - second_hand_position.y) / (first_hand_position.x - second_hand_position.x)
                 _sign = 1 if _slope > 0 else -1
@@ -282,14 +276,6 @@ class SpaceShooter:
                     else:
                         self.player_x = 0 + self.config.player_step
 
-                for hand_landmarks in hand_results.multi_hand_landmarks:
-                    # Draw hand landmarks and connections
-                    mp_drawing.draw_landmarks(
-                        blank,
-                        hand_landmarks,
-                        mp_hands.HAND_CONNECTIONS,
-                    )
-
                 f_thumb = first_hand.landmark[1:5]
                 l_thumb = second_hand.landmark[1:5]
                 row: pd.DataFrame = pd.DataFrame({
@@ -308,11 +294,99 @@ class SpaceShooter:
                     row[f"second-hand-pt-{idx + 1}-y"] = tup[1]
                     row[f"second-hand-pt-{idx + 1}-z"] = tup[2]
                 
+                
                 row.drop(columns=["is_fire"], inplace=True)
-                if (self.fire_controller.decide(row)):
+                is_firing = self.fire_controller.decide(row)
+                if (is_firing):
                     self.fire_simple()
 
-                # self.fire_simple()
+                wheel_img = self.firing_wheel_image if is_firing else self.config.steering_wheel_image
+                
+                # Replace this line:
+                # blank = cv2.bitwise_or(blank, self.config.steering_wheel_image)
+
+                # With this code:
+
+                # Check if the image was loaded successfully
+                if wheel_img is None:
+                    print("WARNING: steering_wheel_image is None - image not loaded properly")
+                    cv2.imshow("x", blank)
+                    cv2.waitKey(1)
+                    return
+
+                wheel_h, wheel_w = wheel_img.shape[:2]
+                blank_h, blank_w = blank.shape[:2]
+
+                # Resize the wheel to exactly match the hypotenuse
+                # Convert normalized hypotenuse to pixel size
+                hypotenuse_pixels = int(hypotenuse * min(blank_w, blank_h))  # Scale to image dimensions
+
+                # Calculate scale factor to make the wheel diameter equal to hypotenuse
+                current_wheel_size = max(wheel_w, wheel_h)  # Use largest dimension as reference
+                scale_factor = hypotenuse_pixels / current_wheel_size
+
+                # Resize the wheel
+                # new_wheel_w = int(wheel_w * scale_factor)
+                new_wheel_w = int(wheel_w * scale_factor)
+                new_wheel_h = int(wheel_h * scale_factor)
+
+                wheel_img = cv2.resize(wheel_img, (new_wheel_w, new_wheel_h))
+                wheel_h, wheel_w = wheel_img.shape[:2]
+
+                # Rotate the wheel image (optional - set rotation_angle as needed)
+                rotation_angle = _slope * -30  # Degrees - you can make this dynamic based on hand position
+                if rotation_angle != 0:
+                    # Get rotation matrix
+                    center = (wheel_w // 2, wheel_h // 2)
+                    rotation_matrix = cv2.getRotationMatrix2D(center, rotation_angle, 1.0)
+                    
+                    # Calculate new dimensions after rotation
+                    cos_angle = abs(rotation_matrix[0, 0])
+                    sin_angle = abs(rotation_matrix[0, 1])
+                    new_w = int((wheel_h * sin_angle) + (wheel_w * cos_angle))
+                    new_h = int((wheel_h * cos_angle) + (wheel_w * sin_angle))
+                    
+                    # Adjust rotation matrix to prevent clipping
+                    rotation_matrix[0, 2] += (new_w / 2) - center[0]
+                    rotation_matrix[1, 2] += (new_h / 2) - center[1]
+                    
+                    # Apply rotation
+                    wheel_img = cv2.warpAffine(wheel_img, rotation_matrix, (new_w, new_h))
+                    wheel_h, wheel_w = wheel_img.shape[:2]
+
+                # Calculate position for bottom-center
+                # x_offset = int((first_hand_pixel_x + second_hand_pixel_x) // 2)
+                # y_offset = int((first_hand_pixel_y + second_hand_pixel_y) // 2)
+                x_offset = (blank_w - wheel_w) // 2  # Center horizontally
+                y_offset = (blank_h - wheel_h) // 2    # Bottom with 10px margin
+
+                # Ensure the wheel fits within the blank image
+                if x_offset >= 0 and y_offset >= 0 and x_offset + wheel_w <= blank_w and y_offset + wheel_h <= blank_h:
+                    # Create a mask if the wheel image has transparency (optional)
+                    if wheel_img.shape[2] == 4:  # RGBA image
+                        # Convert RGBA to RGB and create mask from alpha channel
+                        wheel_rgb = cv2.cvtColor(wheel_img, cv2.COLOR_RGBA2RGB)
+                        mask = wheel_img[:, :, 3]  # Alpha channel as mask
+                        
+                        # Apply mask
+                        for c in range(3):
+                            blank[y_offset:y_offset+wheel_h, x_offset:x_offset+wheel_w, c] = \
+                                blank[y_offset:y_offset+wheel_h, x_offset:x_offset+wheel_w, c] * (1 - mask/255.0) + \
+                                wheel_rgb[:, :, c] * (mask/255.0)
+                    else:
+                        # Simple overlay for RGB image
+                        blank[y_offset:y_offset+wheel_h, x_offset:x_offset+wheel_w] = wheel_img
+                
+
+                for hand_landmarks in hand_results.multi_hand_landmarks:
+                    # Draw hand landmarks and connections
+                    mp_drawing.draw_landmarks(
+                        blank,
+                        hand_landmarks,
+                        mp_hands.HAND_CONNECTIONS,
+                    )
+
+
                 cv2.imshow("x", blank)
                 cv2.waitKey(1)
         self.stdscr.clear()
