@@ -32,6 +32,11 @@ mp_drawing_styles = mediapipe.solutions.drawing_styles
 class Config:
     # Use ASCII fallbacks for better terminal compatibility
     player_char: str = "^"
+    player_str = {
+        "line_1": "  ^  ",
+        "line_2": " ^^^ ",
+        "line_3": "^^^^^"
+    }
     enemy_char: str = "V"
     player_step: int = 4
     tmp_player_step: int = 4
@@ -439,8 +444,11 @@ class SpaceShooter:
         self.stdscr.erase()
         
         # Draw player
-        self.safe_addch(self.player_y, self.player_x, self.config.player_char, 
-                       curses.color_pair(2) if curses.has_colors() else 0)
+        # self.safe_addch(self.player_y, self.player_x, self.config.player_char, 
+        #                curses.color_pair(2) if curses.has_colors() else 0)
+        self.safe_addstr(self.player_y, self.player_x - 2, self.config.player_str["line_1"], curses.color_pair(2) if curses.has_colors() else 0)
+        self.safe_addstr(self.player_y + 1, self.player_x - 2, self.config.player_str["line_2"], curses.color_pair(2) if curses.has_colors() else 0)
+        self.safe_addstr(self.player_y + 2, self.player_x - 2, self.config.player_str["line_3"], curses.color_pair(2) if curses.has_colors() else 0)
         
         # Draw bullets
         for shoot in self.shoots:
@@ -470,10 +478,9 @@ class SpaceShooter:
 
     def render_ui(self):
         """Render game UI elements"""
-        # self.safe_addstr(0, 1, f"Health: {self.health}")
-        # self.safe_addstr(0, 15, f"Score: {self.score}")
-        # self.safe_addstr(0, 30, f"Enemies: {len(self.enemies)}")
-        self.safe_addstr(0, 45, f"player: ({self.player_x},{self.player_y})")
+        self.safe_addstr(0, 1, f"Health: {self.health}")
+        self.safe_addstr(0, 15, f"Score: {self.score}")
+        self.safe_addstr(0, 30, f"Enemies: {len(self.enemies)}")
         
         # Instructions
         instructions = "Arrow keys: Move | Space: Fire | Q: Quit"
