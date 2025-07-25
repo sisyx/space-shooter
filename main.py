@@ -276,36 +276,15 @@ class SpaceShooter:
                     else:
                         self.player_x = 0 + self.config.player_step
 
-                f_thumb = first_hand.landmark[1:5]
-                l_thumb = second_hand.landmark[1:5]
-                row: pd.DataFrame = pd.DataFrame({
-                    "is_fire": 1
-                }, index=[0])
+                f_thumb = first_hand.landmark[2:5]
+                l_thumb = second_hand.landmark[2:5]
 
-                for idx, pos in enumerate(f_thumb):
-                    tup = (pos.x, pos.y, pos.z)
-                    row[f"first-hand-pt-{idx + 1}-x"] = tup[0]
-                    row[f"first-hand-pt-{idx + 1}-y"] = tup[1]
-                    row[f"first-hand-pt-{idx + 1}-z"] = tup[2]
-                
-                for idx, pos in enumerate(l_thumb):
-                    tup = (pos.x, pos.y, pos.z)
-                    row[f"second-hand-pt-{idx + 1}-x"] = tup[0]
-                    row[f"second-hand-pt-{idx + 1}-y"] = tup[1]
-                    row[f"second-hand-pt-{idx + 1}-z"] = tup[2]
-                
-                
-                row.drop(columns=["is_fire"], inplace=True)
-                is_firing = self.fire_controller.decide(row)
-                if (is_firing):
+                is_firing = self.fire_controller.decide(f_thumb) or self.fire_controller.decide(l_thumb)
+
+                if is_firing:
                     self.fire_simple()
 
                 wheel_img = self.firing_wheel_image if is_firing else self.config.steering_wheel_image
-                
-                # Replace this line:
-                # blank = cv2.bitwise_or(blank, self.config.steering_wheel_image)
-
-                # With this code:
 
                 # Check if the image was loaded successfully
                 if wheel_img is None:
