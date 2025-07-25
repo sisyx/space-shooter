@@ -33,9 +33,9 @@ class Config:
     # Use ASCII fallbacks for better terminal compatibility
     player_char: str = "^"
     player_str = {
-        "line_1": "  ^  ",
-        "line_2": " ^^^ ",
-        "line_3": "^^^^^"
+        "line_1": "  | ",
+        "line_2": " /^\\ ",
+        "line_3": "/^^^\\"
     }
     enemy_char: str = "V"
     player_step: int = 4
