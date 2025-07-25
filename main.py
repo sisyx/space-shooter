@@ -42,6 +42,11 @@ class Config:
     target_fps = 30
     # steering_wheel_image_path = Path(__file__).parent / "photos/steering_wheel.png"
     steering_wheel_image = cv2.imread("photos/steering-wheel.png")
+    bombed_enemy = {
+        "line_1": "\\ /",
+        "line_2": "_   _",
+        "line_3": "/ \\"
+    }
 
 class SpaceShooter:
     def __init__(self, stdscr, config=Config()):
@@ -70,6 +75,7 @@ class SpaceShooter:
         
         self.shoots: list = []
         self.enemies: list = []
+        self.bombed_enemies: list = []
         self.loop_count = 0
 
         # score & player
@@ -399,6 +405,8 @@ class SpaceShooter:
 
     def update_game_state(self):
         """Update all game objects"""
+        if self.loop_count % 6 == 0:
+            self.bombed_enemies.clear()
         self.update_shoots()
         self.update_enemies()
         self.update_shoot_enemy()
@@ -444,11 +452,14 @@ class SpaceShooter:
             self.safe_addch(enemy["y"], enemy["x"], self.config.enemy_char,
                            curses.color_pair(1) if curses.has_colors() else 0)
         
+        for bombed_enemy in self.bombed_enemies:
+            # self.safe_addch(bombed_enemy["y"], bombed_enemy["x"], "X", )
+            self.safe_addstr(bombed_enemy["y"] - 1, bombed_enemy["x"], self.config.bombed_enemy["line_1"])
+            self.safe_addstr(bombed_enemy["y"]    , bombed_enemy["x"] - 1, self.config.bombed_enemy["line_2"])
+            self.safe_addstr(bombed_enemy["y"] + 1, bombed_enemy["x"], self.config.bombed_enemy["line_3"])
+
         # Draw UI
         self.render_ui()
-
-        # Draw controlls 
-        # self.render_control()
         
         # Draw border (optional, for better visual feedback)
         self.draw_border()
@@ -526,6 +537,8 @@ class SpaceShooter:
                     abs(shoot["y"] - enemy["y"]) <= bullet_hitbox):
                     enemies_to_remove.append(eidx)
                     shoots_to_remove.append(sidx)
+                    self.bombed_enemies.append(self.enemies[eidx])
+                    self.audio_controller._play_explosion_sound()
     
         # Remove collided objects (in reverse order to avoid index issues)
         for eidx in sorted(set(enemies_to_remove), reverse=True):
